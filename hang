@@ -1,0 +1,305 @@
+#!/bin/bash -
+#
+# SCRIPT: hang
+# AUTHOR: Luciano D. Cecere
+# DATE: 10/14/2014-04:48:27 PM
+PROGRAM="${0##*/}"
+PROG_VERSION=3.0
+DETAILS="Copyright (C) 2014 Luciano D. Cecere <Ldante86@aol.com>"
+LEGAL="GNU General Public License Version 2"
+########################################################################
+#
+# hang - a bash version of hangman (version 3)
+# Copyright (C) 2014 Luciano D. Cecere <Ldante86@aol.com>
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 2 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+########################################################################
+
+export PATH=/bin:/usr/bin
+unalias -a
+
+trap _clean_exit INT
+
+WORD_LIST=/usr/share/dict/words
+
+declare -l guess
+
+_init()
+{
+    printf "\e[?25l"
+    title="H A N G M A N"
+    bo=$(tput smso)
+    ld=$(tput rmso)
+    format="\n\t%s\n"
+    max_turns=10
+    game=0
+    win=0
+    lose=0
+}
+
+_main()
+{
+    ((++game))
+    local turn=0 c=0
+    local -a bucket mask word old_state new_state
+
+    _load_word $(_get_word)
+    _mask_word
+    _show_game
+
+    while true
+    do
+      _if_game_end
+      case $? in
+        0)  ((++turn)) ;;
+        1)  printf "$format" "$end_msg"
+            _replay
+            case $? in
+              0)  _main ;;
+              1)  _clean_exit 0
+           esac
+      esac
+
+      read -sn1 guess
+      case $guess in
+        *[!a-z]*)  printf "$format" "Not a valid guess: '$guess'"
+                   ((--turn))
+                   continue
+                   ;;
+        ''      )  ((--turn))
+                   continue
+      esac
+
+      _check_guess
+      case $? in
+        1)  printf "$format" "Already guessed '$guess'"
+            continue
+      esac
+
+      old_state="${word[@]}"
+      _update_state
+      new_state="${word[@]}"
+
+      _process_play
+      _sort_bucket
+      _show_game
+    done
+}
+
+_sort_bucket()
+{
+    local i j=0 t
+    local len=$((${#bucket[@]} - 1))
+    while ((len > 0))
+    do
+      i=0
+      while ((i < len))
+      do
+        if [ "${bucket[i]}" \> "${bucket[i+1]}" ]; then
+          t="${bucket[i]}"
+          bucket[i]="${bucket[i+1]}"
+          bucket[i+1]="$t"
+        fi
+        ((++i))
+      done
+      ((++j))
+      ((--len))
+    done
+}
+
+_check_guess()
+{
+    for ((i=0; i<${#bucket[@]}; i++)); do
+      if [ "${bucket[i]}" = "$guess" ]; then
+        ((--turn))
+        return 1
+      fi
+    done
+    for ((i=0; i<${#mask[@]}; i++)); do
+      if [ "${mask[i]}" = "$guess" ]; then
+        ((--turn))
+        return 1
+      fi
+    done
+}
+
+_update_state()
+{
+    for ((i=0; i<${#word[@]}; i++)); do
+      if [ "${word[i]}" = "$guess" ]; then
+        mask[i]=${word[i]}
+        word[i]=
+      fi
+    done
+}
+
+_if_game_end()
+{
+    if (($turn >= $max_turns)); then
+      end_msg="Sorry, the word was ${bo}$secret${ld}"
+      ((++lose))
+      return 1
+    fi
+    if [ -z $(tr -d ' ' <<< ${word[@]}) ]; then
+      end_msg="${bo}You got it!${ld}"
+      ((++win))
+      return 1
+    fi
+}
+
+_mask_word()
+{
+    for ((i=0; i<${#word[@]}; i++)); do
+      mask+=(-)
+    done
+}
+
+_replay()
+{
+    while true
+    do
+      printf "$format" "Play again? y/n"
+      read -sn1
+      case $REPLY in
+        [Yy])  return 0 ;;
+        [Nn])  return 1 ;;
+      esac
+    done
+}
+
+_process_play()
+{
+    if [ "$old_state" = "$new_state" ]; then
+      bucket[c]=$guess
+      ((++c))
+    else
+      ((--turn))
+    fi
+}
+
+_get_word()
+{
+    local error=0
+    local word=$(shuf -n 1 $WORD_LIST)
+
+    case "$word" in
+      *[\']* | *[é]* | *[è]*)  error=1
+    esac
+
+    [ ${#word} -lt 7 ] && error=1
+
+    [[ ${word:0:1} == [[:upper:]] ]] && error=1
+
+    [ $error -eq 1 ] && _get_word || echo $word
+}
+
+_load_word()
+{
+    secret=$1
+    for ((i=0; i<${#secret}; i++)); do
+      word+=(${secret:i:1})
+    done
+}
+
+_clean_exit()
+{
+    stty echo
+    case "$2" in
+      '')  clear ;;
+      * )  echo "$2"
+    esac
+    printf "\e[?12l\e[?25h"
+    exit ${1:-0}
+}
+
+_show_game()
+{
+    clear
+cat <<stdout
+
+                 ${bo}${title}${ld}
+
+        ${mask[@]}
+
+        $((max_turns - turn)) turns left
+        Tried letters: ${bucket[@]}
+        game: $game | win: $win | lose: $lose
+        $(_show_hanged_man $turn)
+stdout
+}
+
+_show_hanged_man()
+{
+    case $1 in
+      0)  true ;;
+      1)  printf "\n\t _" ;;
+      2)  printf "\n\t _\n\t  |" ;;
+      3)  printf "\n\t _\n\t  |\n\t  |" ;;
+      4)  printf "\n\t _\n\t  |\n\t  |\n\t  0" ;;
+      5)  printf "\n\t _\n\t  |\n\t  |\n\t  0\n\t  |" ;;
+      6)  printf "\n\t _\n\t  |\n\t  |\n\t  0\n\t  |\n\t  |" ;;
+      7)  printf "\n\t _\n\t  |\n\t  |\n\t  0\n\t /|\n\t  |" ;;
+      8)  printf "\n\t _\n\t  |\n\t  |\n\t  0\n\t /|\\ \n\t  |" ;;
+      9)  printf "\n\t _\n\t  |\n\t  |\n\t  0\n\t /|\\ \n\t  |\n \t /" ;;
+     10)  printf "\n\t _\n\t  |\n\t  |\n\t  0\n\t /|\\ \n\t  |\n  \t / \\" ;;
+    esac
+}
+
+_help()
+{
+	cat <<-eof
+	$PROGRAM [-flag] [parameter]
+	        -f              do not display hanged man
+	        -h              show this help and exit
+	        -l limit        set turn limit, implies -f
+	        -s word[.]	find spelling error for word
+	                        insert a dot for unknown letter
+	                        % $PROGRAM -s ha.g.a. [returns "hangman"]
+	Version: $PROG_VERSION
+	$DETAILS
+	$LEGAL
+	eof
+}
+
+[ ! -e $WORD_LIST ] && _clean_exit 1 "$WORD_LIST not found"
+
+case $1 in
+  -s|-h)  true ;;
+  *    )  _init
+esac
+
+case $1 in
+  -f)  _show_hanged_man() { : ; }
+       _main
+       ;;
+  -l)  case "$2" in
+         $max_turns|'')  true ;;
+         *            )  max_turns="$2"
+                         _show_hanged_man() { : ; }
+       esac
+       _main
+       ;;
+  -s)  if [ -z "$2" ]; then
+         _help
+       else
+         grep -i --color=always "^$2$" $WORD_LIST
+       fi
+       ;;
+  -h)  _help ;;
+ ' '|'')  _main ;;
+  -*|*)
+       echo "'$1' - Invalid option"
+       _help
+esac
